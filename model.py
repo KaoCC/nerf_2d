@@ -16,6 +16,8 @@ class Nerf2DMLP(pl.LightningModule):
             nn.ReLU(),
             nn.Linear(n_hidden, n_hidden),
             nn.ReLU(),
+            nn.Linear(n_hidden, n_hidden),
+            nn.ReLU(),
             nn.Linear(n_hidden, n_outputs),
             nn.ReLU(),
         )

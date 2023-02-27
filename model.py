@@ -19,13 +19,12 @@ class Nerf2DMLP(pl.LightningModule):
             nn.Linear(n_hidden, n_hidden),
             nn.ReLU(),
             nn.Linear(n_hidden, n_outputs),
-            nn.ReLU(),
+            nn.Sigmoid(),
         )
 
-        # activation ?
-
     def forward(self, x):
-        return self.layers(x)
+        result = self.layers(x)
+        return result * 255
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)

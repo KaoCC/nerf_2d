@@ -3,12 +3,11 @@ from model import Nerf2DMLP
 from PIL import Image
 import numpy as np
 from torch.utils.data import DataLoader, TensorDataset
-import pytorch_lightning as pl
+import lightning as pl
 
 import math
 
 
-# Fourier feature mapping
 def frequency_encoding(x_val, y_val, n_freq):
     exp = lambda v: [math.pow(2, f) * v for f in range(0, n_freq)]
 
@@ -30,7 +29,7 @@ def normalize(raw_x, raw_y, resolution_x, resolution_y):
     return (v_x, v_y)
 
 
-def prepare_training_dataloader(image_array, num_freq):
+def prepare_training_dataloader(image_array):
     img_h, img_w, img_c = image_array.shape
 
     train_data_features = []
@@ -39,7 +38,7 @@ def prepare_training_dataloader(image_array, num_freq):
     for h, _ in enumerate(image_array):
         for w, val in enumerate(image_array[h]):
             v_x, v_y = normalize(w, h, img_w, img_h)
-            train_input = frequency_encoding(v_x, v_y, num_freq)
+            train_input = [v_x, v_y]
 
             train_data_features.append(train_input)
             train_data_labels.append(val)
@@ -52,10 +51,10 @@ def prepare_training_dataloader(image_array, num_freq):
 
     dataset = TensorDataset(feature_tensor, label_tensor)
 
-    return DataLoader(dataset, shuffle=True, batch_size=2048)
+    return DataLoader(dataset, shuffle=True, batch_size=4096)
 
 
-def prepare_inference_dataloader(image_array, num_freq):
+def prepare_inference_dataloader(image_array):
     img_h, img_w, img_c = image_array.shape
 
     predict_data = []
@@ -63,8 +62,7 @@ def prepare_inference_dataloader(image_array, num_freq):
     for h in range(img_h):
         for w in range(img_w):
             v_x, v_y = normalize(w, h, img_w, img_h)
-
-            predict_input = frequency_encoding(v_x, v_y, num_freq)
+            predict_input = [v_x, v_y]
             predict_data.append(predict_input)
 
     predict_input_tensor = torch.tensor(np.array(predict_data)).to(torch.float32)
@@ -73,7 +71,7 @@ def prepare_inference_dataloader(image_array, num_freq):
 
     print("Dataset[0] in prepare_inference_dataloader: ", dataset[0])
 
-    return DataLoader(dataset, batch_size=2048)
+    return DataLoader(dataset, batch_size=4096)
 
 
 def generate_output_image(image_array, predictions):
@@ -89,12 +87,14 @@ def generate_output_image(image_array, predictions):
 
 
 def main():
-    num_freq = 7
 
-    # freq * (a pair of sin & cos) * (a pair of x and y)
-    num_input = num_freq * 2 * 2
+    # 2D position
+    input_dim = 2
 
-    model = Nerf2DMLP(num_input, 256, 3)
+    # 3D color
+    output_dim = 3
+
+    model = Nerf2DMLP(input_dim, 256, output_dim)
     print(model)
 
     print("model type", model.dtype)
@@ -112,18 +112,18 @@ def main():
 
     print(" --- Loading Data --- ")
 
-    train_dataloader = prepare_training_dataloader(image_array, num_freq)
+    train_dataloader = prepare_training_dataloader(image_array)
 
     print(" --- Train --- ")
 
-    trainer = pl.Trainer(limit_train_batches=20000, max_epochs=20)
+    trainer = pl.Trainer(limit_train_batches=20000, max_epochs=10)
     trainer.fit(model, train_dataloader)
 
     print(" --- Predict --- ")
 
     model.eval()
 
-    inference_dataloader = prepare_inference_dataloader(image_array, num_freq)
+    inference_dataloader = prepare_inference_dataloader(image_array)
     predictions = trainer.predict(model, inference_dataloader)
 
     print(" --- Output image --- ")

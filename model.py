@@ -3,6 +3,7 @@ import torch
 import lightning as pl
 import torch.nn.functional as F
 import math
+import numpy as np
 
 
 class MLP(nn.Module):
@@ -68,6 +69,121 @@ class Nerf2DMLP(pl.LightningModule):
 
         # result is in [0, 1]
         # scale to be in [0, 255]
+        return result * 255
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
+        return optimizer
+
+    def training_step(self, train_batch, batch_index):
+        x, y = train_batch
+        y_hat = self(x)
+        loss = F.mse_loss(y_hat, y)
+        self.log("train_loss", loss)
+        return loss
+
+
+# based on the paper
+PRIMES = [1, 2654435761]
+
+
+@torch.no_grad()
+def hash_func(indices: torch.Tensor, primes: torch.Tensor, hashmap_size: int):
+
+    # neighbors
+    d = indices.shape[-1]
+
+    # indices = (indices * primes[:d]) & 0xFFFFFFFF  # uint32
+    indices = (indices * primes[:d]).clamp(0, np.iinfo(np.uint32).max)
+    for i in range(1, d):
+        indices[..., 0] ^= indices[..., i]
+    return indices[..., 0] % hashmap_size
+
+
+class Grid(nn.Module):
+    def __init__(
+        self, input_dim: int, n_features: int, hashmap_size: int, resolution: float
+    ):
+        super().__init__()
+        self.input_dim = input_dim
+        self.n_features = n_features
+        self.hashmap_size = hashmap_size
+        self.resolution = resolution
+
+        self.embedding = nn.Embedding(hashmap_size, n_features)
+        nn.init.uniform_(self.embedding.weight, a=-1e-4, b=1e-4)
+
+        # for hash
+        primes = torch.tensor(PRIMES, dtype=torch.int64)
+        self.register_buffer("primes", primes, persistent=False)
+
+        n_neighbors = 1 << self.input_dim
+        neighbors = np.arange(n_neighbors, dtype=np.int64).reshape((-1, 1))
+        dims = np.arange(self.input_dim, dtype=np.int64).reshape((1, -1))
+
+        # binary mask for interpolation
+        binary_mask = torch.tensor(neighbors & (1 << dims) == 0, dtype=bool)
+        self.register_buffer("binary_mask", binary_mask, persistent=False)
+
+    def forward(self, x: torch.Tensor):
+
+        # x:  (batch_size, input_dim)
+
+        # transform each element from [-1, 1] t0 [0, 1]
+        x = x + 1
+        x = x / 2
+
+        batch_dims = len(x.shape[:-1])
+
+        # print(batch_dims)
+
+        x = x * self.resolution
+
+        x_i = x.long()
+        x_f = x - x_i.float().detach()
+
+        # (batch_size, 1, input_dim)
+        x_i = x_i.unsqueeze(dim=-2)
+        x_f = x_f.unsqueeze(dim=-2)
+
+        # (1, n_neighbors, input_dim)
+        binary_mask = self.binary_mask.reshape(
+            (1,) * batch_dims + self.binary_mask.shape
+        )
+
+        # print(binary_mask)
+        # print(binary_mask.shape)
+
+        # (batch_size, n_neighbors, input_dim)
+        indices = torch.where(binary_mask, x_i, x_i + 1)
+        weights = torch.where(binary_mask, 1 - x_f, x_f)
+
+        weight = weights.prod(dim=-1, keepdim=True)
+
+        hash_ids = hash_func(indices, self.primes, self.hashmap_size)
+
+        neighbor_data = self.embedding(hash_ids)
+        return torch.sum(neighbor_data * weight, dim=-2)
+
+
+class Nerf2DGridMLP(pl.LightningModule):
+    def __init__(self, n_inputs, n_hidden, n_outputs):
+        super().__init__()
+
+        # Grid
+        # Input -> N-D feature vector
+
+        self.encoder = Grid(n_inputs, 7, 2**15, 1024)
+
+        # MLP
+        self.mlp = MLP(self.encoder.n_features, n_hidden, n_outputs)
+
+    def forward(self, x: torch.Tensor):
+
+        # encode
+        enc_x = self.encoder(x)
+        result = self.mlp(enc_x)
+
         return result * 255
 
     def configure_optimizers(self):

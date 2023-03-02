@@ -1,11 +1,12 @@
 import torch
-from model import Nerf2DMLP
+from model import Nerf2DMLP, Nerf2DGridMLP
 from PIL import Image
 import numpy as np
 from torch.utils.data import DataLoader, TensorDataset
 import lightning as pl
 
 import math
+import torch.onnx
 
 
 def frequency_encoding(x_val, y_val, n_freq):
@@ -130,6 +131,11 @@ def main():
 
     out_image = generate_output_image(image_array, predictions)
     out_image.show()
+
+    # Output ONNX model
+
+    dummy_input = torch.rand(input_dim)
+    torch.onnx.export(model, dummy_input, "nerf_model.onnx", export_params=True)
 
 
 if __name__ == "__main__":

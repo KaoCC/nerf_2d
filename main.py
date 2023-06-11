@@ -34,20 +34,17 @@ def prepare_training_dataloader(image_array):
     img_h, img_w, img_c = image_array.shape
 
     train_data_features = []
-    train_data_labels = []
 
-    for h, _ in enumerate(image_array):
-        for w, val in enumerate(image_array[h]):
+    for h in range(img_h):
+        for w in range(img_w):
             v_x, v_y = normalize(w, h, img_w, img_h)
             train_input = [v_x, v_y]
-
             train_data_features.append(train_input)
-            train_data_labels.append(val)
 
     feature_tensor = torch.tensor(np.array(train_data_features))
     feature_tensor = feature_tensor.to(torch.float32)
 
-    label_tensor = torch.tensor(np.array(train_data_labels))
+    label_tensor = torch.tensor(image_array).reshape(img_h * img_w, img_c)
     label_tensor = label_tensor.to(torch.float32)
 
     dataset = TensorDataset(feature_tensor, label_tensor)
@@ -88,19 +85,18 @@ def generate_output_image(image_array, predictions):
 
 
 def main():
-
     # 2D position
     input_dim = 2
 
     # 3D color
     output_dim = 3
 
-    model = Nerf2DMLP(input_dim, 256, output_dim)
+    model = Nerf2DGridMLP(input_dim, 256, output_dim)
     print(model)
 
     print("model type", model.dtype)
 
-    file_path = "dataset/lenna.png"
+    file_path = "dataset/munich.jpg"
 
     image = Image.open(file_path)
     image_array = np.asarray(image)

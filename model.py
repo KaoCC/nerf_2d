@@ -83,21 +83,45 @@ class Nerf2DMLP(pl.LightningModule):
         return loss
 
 
-# based on the paper
-PRIMES = [1, 2654435761]
 
+PRIMES = [
+    73856093,
+    19349663,
+    83492791,
+    49979687,
+    97755331,
+    13623469,
+    31912469,
+    2654435761,
+]
+
+def hash_func_simple(indices, primes, hashmap_size):
+    d = indices.shape[-1]
+    hashed = ((indices * primes[:d]).sum(dim=-1)) % hashmap_size
+    return hashed
 
 @torch.no_grad()
 def hash_func(indices: torch.Tensor, primes: torch.Tensor, hashmap_size: int):
 
+    """
+    indices: (..., D) integer tensor of grid indices
+    primes:  (D,) tensor of large primes
+    hashmap_size: size of the hash table (int, typically power of 2)
+
+    Returns:
+        hashed_indices: (...,) tensor of hashed indices into the table
+    """
+
+    assert indices.dtype == torch.int64
+
     # neighbors
     d = indices.shape[-1]
 
-    # indices = (indices * primes[:d]) & 0xFFFFFFFF  # uint32
-    indices = (indices * primes[:d]).clamp(0, np.iinfo(np.uint32).max)
+    hashed = indices[..., 0] * primes[0]
     for i in range(1, d):
-        indices[..., 0] ^= indices[..., i]
-    return indices[..., 0] % hashmap_size
+        hashed ^= indices[..., i] * primes[i]
+    return hashed % hashmap_size
+
 
 
 class Grid(nn.Module):
@@ -122,7 +146,8 @@ class Grid(nn.Module):
         dims = np.arange(self.input_dim, dtype=np.int64).reshape((1, -1))
 
         # binary mask for interpolation
-        binary_mask = torch.tensor(neighbors & (1 << dims) == 0, dtype=bool)
+        binary_mask_np = (neighbors & (1 << dims)) == 0
+        binary_mask = torch.tensor(binary_mask_np, dtype=bool)
         self.register_buffer("binary_mask", binary_mask, persistent=False)
 
     def forward(self, x: torch.Tensor):
@@ -173,7 +198,7 @@ class Nerf2DGridMLP(pl.LightningModule):
         # Grid
         # Input -> N-D feature vector
 
-        self.encoder = Grid(n_inputs, 7, 2**15, 1024)
+        self.encoder = Grid(n_inputs, 3, 2**17, 256)
 
         # MLP
         self.mlp = MLP(self.encoder.n_features, n_hidden, n_outputs)
